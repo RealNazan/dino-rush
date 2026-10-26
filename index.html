@@ -234,6 +234,8 @@ body{background:var(--sky-mid);color:var(--bone);font-family:var(--body);-webkit
 .mprow .mpn{font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mprow .mpx{font-size:12px;color:var(--muted);text-align:right}
 .mprow.me{box-shadow:inset 0 0 0 2px var(--leaf)}
+.mprow .mpx b{color:var(--leaf);font-weight:800}
+.mpready[aria-pressed="true"]{background:var(--leaf);color:#14260c;box-shadow:0 5px 0 #3e7a2a}
 .mpboard{position:fixed;left:max(16px,env(safe-area-inset-left,0px));top:calc(150px + env(safe-area-inset-top,0px));display:flex;flex-direction:column;gap:4px;pointer-events:none;min-width:150px}
 .mpb{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:7px;align-items:center;background:var(--slab);border:1.5px solid var(--slab-edge);border-radius:10px;padding:4px 9px;font-size:13px;font-weight:700}
 .mpb i{width:10px;height:10px;border-radius:50%}
@@ -424,15 +426,15 @@ button,.chip,.tab,.item{touch-action:manipulation}
         <span class="lbl2">Dificultad</span><div class="chips" id="mpDiffChips"><button class="chip" data-m="n">Normal</button><button class="chip" data-m="nh">Difícil</button></div></div>
       <p class="mpnote" id="mpTypeInfo"></p>
       <p class="mpmsg" id="mpLobbyMsg" role="status"></p>
-      <button class="btn" id="mpStart" hidden>Empezar carrera</button>
+      <button class="btn mpready" id="mpStart" aria-pressed="false">Listo</button>
       <button class="btn2" id="mpLeave">Salir de la sala</button>
     </div>
     <div id="mpRes" class="mpcol" hidden>
       <h2 class="ptitle" id="mpResTitle"></h2>
       <p id="mpResSub"></p>
       <div class="mplist" id="mpResList"></div>
-      <button class="btn" id="mpAgain" hidden>Revancha</button>
-      <p class="mpmsg" id="mpResWait" hidden>Esperando a que el anfitrión pulse Revancha…</p>
+      <button class="btn mpready" id="mpAgain" aria-pressed="false" hidden>Listo para la revancha</button>
+      <p class="mpmsg" id="mpResWait" hidden></p>
       <button class="btn2" id="mpResLeave">Salir de la sala</button>
     </div>
   </div>
@@ -9070,6 +9072,7 @@ function mpSet(patch) { Object.assign(mpMe, patch); if (MP.net) MP.net.set(Objec
 function mpShow(view) {
   ['mpHome', 'mpLobby', 'mpRes'].forEach(id => { $(id).hidden = id !== view; });
   $('mp').hidden = false;
+  if (view === 'mpRes') $('mpBoard').hidden = true;   // the results list says it all; the small board would sit on top of it
 }
 function mpOpen() {
   if (godMode) { showToast('Quita el modo invencible para jugar en multijugador'); return; }
@@ -9097,7 +9100,7 @@ async function mpConnect(code) {
   $('mpCreate').disabled = $('mpJoin').disabled = false;
   MP.code = code; MP.lastN = 0; MP.race = null; MP.joinT = performance.now(); MP.hostSeen = false;
   settings.name = ($('mpName').value || '').trim().slice(0, 14) || settings.name || 'Jugador'; persist();
-  mpSet({ v: 1, nm: settings.name, dn: save.dino, sk: save.skin, j: Date.now(), ph: 'lobby', gn: 0, g: null, d: 0, al: 0, sc: 0 });
+  mpSet({ v: 1, nm: settings.name, dn: save.dino, sk: save.skin, j: Date.now(), ph: 'lobby', gn: 0, g: null, d: 0, al: 0, sc: 0, rd: 0 });
   mpShow('mpLobby'); mpRender();
   return true;
 }
@@ -9135,18 +9138,20 @@ function mpRender() {
     $('mpCodeShow').textContent = MP.code;
     $('mpWhere').textContent = MP.net.down ? 'Reconectando…' : `Conectado · ${MP.net.where}`;
     const L = $('mpList'); L.textContent = '';
-    list.slice(0, MP_MAX).forEach(p => L.appendChild(mpRow(p, (p.host ? 'anfitrión · ' : '') + (SPECIES[p.s.dn] ? SPECIES[p.s.dn].name : 'Rex') + (p.s.ph === 'race' ? ' · corriendo' : ''))));
+    list.slice(0, MP_MAX).forEach(p => { const r = mpRow(p, (p.host ? 'anfitrión · ' : '') + (SPECIES[p.s.dn] ? SPECIES[p.s.dn].name : 'Rex') + (p.s.ph === 'race' ? ' · corriendo' : p.s.rd ? ' · ' : ' · esperando')); if (p.s.rd && p.s.ph !== 'race') { const b = document.createElement('b'); b.textContent = '✓ listo'; r.lastChild.appendChild(b); } L.appendChild(r); });
     const isHost = !!(host && host.me), racing = host && !host.me && (host.s.ph === 'race' || host.s.ph === 'cd') && host.s.gn !== mpMe.gn;
-    $('mpModeRow').hidden = !isHost; $('mpStart').hidden = !isHost;
+    $('mpModeRow').hidden = !isHost;
     document.querySelectorAll('#mpDiffChips .chip').forEach(c => c.setAttribute('aria-pressed', c.dataset.m === (MP.mode || 'n')));
     document.querySelectorAll('#mpTypeChips .chip').forEach(c => c.setAttribute('aria-pressed', c.dataset.t === (MP.type || 'race')));
     const hl = host && host.s.ls, coopNext = isHost ? MP.type === 'coop' : !!(hl && hl.t === 'coop');
     $('mpTypeInfo').textContent = coopNext ? 'Cooperativo: corréis juntos la misma pista. Si caes, miras a tu compañero y revives cuando él llega a la siguiente zona. Se acaba cuando cae todo el equipo.' : 'Carrera: todos corréis la misma pista y gana quien llegue más lejos.';
-    $('mpStart').disabled = list.length < 2;
+    const nReady = list.filter(p => p.s.rd).length;
+    $('mpStart').setAttribute('aria-pressed', !!mpMe.rd); $('mpStart').textContent = mpMe.rd ? '✓ Listo · pulsa para cancelar' : 'Listo';
+    $('mpStart').disabled = !!racing;
     $('mpLobbyMsg').textContent = list.length > MP_MAX ? `La sala está llena (máximo ${MP_MAX}).`
       : racing ? 'Hay una carrera en marcha. Entrarás en la siguiente.'
-      : isHost ? (list.length < 2 ? 'Comparte el código y espera a que entre alguien.' : 'Cuando estéis todos, pulsa Empezar.')
-      : 'Esperando a que el anfitrión empiece la carrera…';
+      : list.length < 2 ? 'Comparte el código y espera a que entre alguien.'
+      : `Listos ${nReady} de ${list.length}. La partida empieza cuando estéis todos listos.`;
   }
   if (!$('mpRes').hidden && MP.race) mpRenderResults(list);
 }
@@ -9172,8 +9177,10 @@ function mpRenderResults() {
   const L = $('mpResList'); L.textContent = '';
   rows.forEach((r, i) => L.appendChild(mpRow(Object.assign({}, r), `${coop ? '' : i + 1 + 'º · '}${Math.floor(r.s.d || 0)} m · ${r.s.sc || 0} pts${coop && r.s.rv ? ` · revivió ${r.s.rv}` : ''}${r.alive ? ' · corriendo' : r.spec ? ' · mirando' : r.gone ? ' · se fue' : ''}`)));
   const host = mpHost();
-  $('mpAgain').hidden = !(host && host.me); $('mpAgain').disabled = !over;
-  $('mpResWait').hidden = !!(host && host.me) || !over;
+  const all = mpList(), nReady = all.filter(p => p.s.rd).length;
+  $('mpAgain').hidden = !over; $('mpAgain').setAttribute('aria-pressed', !!mpMe.rd);
+  $('mpAgain').textContent = mpMe.rd ? '✓ Listo · pulsa para cancelar' : 'Listo para la revancha';
+  $('mpResWait').hidden = !over; $('mpResWait').textContent = `Listos ${nReady} de ${all.length}. La revancha empieza cuando estéis todos listos.`;
 }
 
 // --- co-op: a crash does not end the run while a teammate still runs; you watch them and come back at the next zone ---
@@ -9226,7 +9233,7 @@ function mpStart() {
 }
 function mpCountdown(g) {
   MP.lastN = g.n; MP.cd = performance.now() + 3200; MP.pending = g; mpSpectEnd(); MP.race = null; mpSeed = 0; mpClearGhosts(); $('mpBoard').hidden = true;
-  mpSet({ ph: 'cd', gn: g.n, d: 0, al: 1, sc: 0 });
+  mpSet({ ph: 'cd', gn: g.n, d: 0, al: 1, sc: 0, rd: 0 });
   if (['play', 'dead', 'pause', 'win'].includes(state)) quitToMenu();
   $('mp').hidden = true; $('over').hidden = true; $('win').hidden = true; $('menu').hidden = true;
   $('mpCount').hidden = false; $('mpCount').textContent = '3';
@@ -9331,12 +9338,14 @@ function mpTick(now, dt) {
   }
   if (coopSpect && state === 'play') mpSpectTick();
   if (MP.race && state === 'play' && mpMe.ph === 'race') mpSet(coopSpect ? { spec: 1, al: 0, zi: mpZi() } : { d: Math.floor(dist), x: +player.x.toFixed(2), y: +player.y.toFixed(2), sl: player.slide > 0 && player.y < 0.05 ? 1 : 0, sp: +speed.toFixed(1), sc: Math.floor(dist) + coins * 25, al: 1, spec: 0, zn: biome, zi: mpZi() });
+  // the host starts the game the moment everyone in the room is ready (at least two of you, nobody still running)
+  { const all = mpList(); if (all.length >= 2 && all.length <= MP_MAX && all[0].me && !MP.cd && all.every(p => p.s.rd && (p.s.ph === 'lobby' || p.s.ph === 'done'))) mpStart(); }
   // the host started a new race?
   const host = mpHost();
   if (host && !MP.hostSeen && (host.me || performance.now() - MP.joinT > 400)) { MP.hostSeen = true; if (!host.me) MP.lastN = Math.max(MP.lastN, (host.s.g && host.s.g.n) || 0); }
   if (host && MP.hostSeen && host.s.g && host.s.g.n > MP.lastN && !MP.cd && (mpMe.ph === 'lobby' || mpMe.ph === 'done') && host.s.g.seed) mpCountdown(host.s.g);
   if (MP.race) mpUpdateGhosts(now, dt);
-  MP.board -= dt; if (MP.board <= 0) { MP.board = 0.2; if (MP.race && !$('mpBoard').hidden) mpRenderBoard(); mpRender(); }
+  if (now - (MP.boardAt || 0) >= 200) { MP.boardAt = now; if (MP.race && !$('mpBoard').hidden) mpRenderBoard(); mpRender(); }
   MP.net.tick(now);
 }
 $('mpBtn').onclick = mpOpen;
@@ -9344,10 +9353,11 @@ $('mpClose').onclick = mpCloseToMenu;
 $('mpCreate').onclick = mpCreate;
 $('mpJoin').onclick = mpJoinCode;
 $('mpCode').addEventListener('keydown', e => { if (e.key === 'Enter') mpJoinCode(); });
-$('mpStart').onclick = mpStart;
+function mpToggleReady() { mpSet({ rd: mpMe.rd ? 0 : 1 }); beep(mpMe.rd ? 880 : 440, 0.08, 'triangle', 0.05); mpRender(); }
+$('mpStart').onclick = mpToggleReady;
 $('mpLeave').onclick = mpLeave;
 $('mpResLeave').onclick = mpLeave;
-$('mpAgain').onclick = mpStart;
+$('mpAgain').onclick = mpToggleReady;
 document.querySelectorAll('#mpDiffChips .chip').forEach(c => c.onclick = () => { MP.mode = c.dataset.m; mpSet({ ls: { t: MP.type || 'race', m: MP.mode } }); mpRender(); });
 document.querySelectorAll('#mpTypeChips .chip').forEach(c => c.onclick = () => { MP.type = c.dataset.t; mpSet({ ls: { t: MP.type, m: MP.mode || 'n' } }); mpRender(); });
 $('mpShare').onclick = async () => {
